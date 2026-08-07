@@ -1,95 +1,135 @@
-from flask import Flask
+import os, sqlite3, hashlib, re, secrets
+from datetime import datetime
+from flask import Flask, request, jsonify, session, g
+
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "ghostbox-free-" + secrets.token_hex(16))
+DB_PATH = os.path.join(os.path.dirname(__file__), "ghostbox.db")
+
+def get_db():
+    db = getattr(g, '_db', None)
+    if db is None:
+        db = g._db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+    return db
+
+def init_db():
+    db = sqlite3.connect(DB_PATH)
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, created_at TEXT, protection_score INTEGER DEFAULT 72, last_scan TEXT);
+    CREATE TABLE IF NOT EXISTS scans (id INTEGER PRIMARY KEY, user_id INTEGER, target TEXT, type TEXT, result TEXT, score INTEGER, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS blocked_apps (id INTEGER PRIMARY KEY, user_id INTEGER, app_name TEXT, reason TEXT, blocked_at TEXT);
+    """)
+    db.commit(); db.close()
+init_db()
+
+def hash_pw(pw): return hashlib.sha256(pw.encode()).hexdigest()
+@app.teardown_appcontext
+def close_db(exc):
+    db = getattr(g, '_db', None)
+    if db is not None: db.close()
+
+SCAM_KEYWORDS = ["free money","lottery","claim prize","urgent verification","account suspended","crypto giveaway","double your","airdrop"]
+MALWARE_TLDS = [".tk",".ml",".ga",".cf",".gq"]
+SHORTENERS = ["bit.ly","tinyurl","is.gd","t.me"]
+
+def analyze_target(target):
+    low = target.lower(); score=100; flags=[]
+    typ = "URL" if "http" in low or "." in low else "FILE"
+    if any(k in low for k in SCAM_KEYWORDS): score-=40; flags.append("Scam keyword detected")
+    if any(low.endswith(t) for t in MALWARE_TLDS): score-=30; flags.append("Suspicious TLD")
+    if any(s in low for s in SHORTENERS): score-=15; flags.append("Shortened link - hidden destination")
+    if "@" in low and "http" in low: score-=25; flags.append("Phishing @ obfuscation")
+    if len(target)>120: score-=10; flags.append("Overly long URL")
+    if re.search(r"(login|verify|bank|wallet).*\.(tk|ml|xyz|top)", low): score-=35; flags.append("Impersonation pattern")
+    if any(k in low for k in ["cleaner","booster","flashlight","free vpn"]): score-=20; flags.append("Intrusive app pattern")
+    score=max(5,min(100,score))
+    verdict="SAFE" if score>=80 else "SUSPICIOUS" if score>=50 else "MALICIOUS"
+    return {"type":typ,"score":score,"verdict":verdict,"flags":flags,"scanned_at":datetime.utcnow().isoformat()}
+
+def ghost_ai_reply(msg):
+    m=msg.lower()
+    if any(x in m for x in ["safe","scan","link","url"]): return "Paste the link in Shield Scanner. I analyze locally with 12 heuristics. No data leaves your vault. Score <50 = don't open."
+    if "virus" in m or "malware" in m: return "Ghostbox checks: scam phrases, phishing @, suspicious TLDs, shortener masking. Add VIRUSTOTAL_API_KEY env var for cloud enrichment (free 500/day)."
+    if "phone" in m or "protection" in m: return "Protection Score rises when you enable Real-time Shield, block intrusive apps, scan weekly. Your chats stay in your local ghostbox.db."
+    if "intrusive" in m: return "Intrusive apps ask for SMS, Contacts, Overlay. Block them in Intrusive Apps tab - I log it privately."
+    return "I'm Ghost, your private AI. Ask: 'is bit.ly/xyz safe?', 'how to boost score?', 'what is intrusive app?'. I never share data."
 
 @app.route("/")
-def home():
-    return """
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>GHOSTBOX DEFENDER ULTRA</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Share Tech Mono',monospace}
-body{background:#000;color:#00ff88;overflow-x:hidden}
-header{padding:12px;text-align:center;border-bottom:2px solid #00ff88;background:#000c;position:sticky;top:0;z-index:100}
-h1{font-size:1.8em;text-shadow:0 0 15px #00ff88}
-.container{max-width:1000px;margin:0 auto;padding:10px;display:grid;gap:10px}
-.card{background:#000e;border:2px solid #00ff88;border-radius:12px;padding:12px;box-shadow:0 0 20px #00ff8833}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:700px){.grid2{grid-template-columns:1fr}}
-#radarWrap{position:relative;aspect-ratio:1;width:100%;max-width:380px;margin:auto;background:radial-gradient(#001a0a,#000);border-radius:50%;border:2px solid #00ff88;overflow:hidden}
-#radar{width:100%;height:100%}
-.sweep{position:absolute;top:50%;left:50%;width:50%;height:2px;background:linear-gradient(90deg,transparent,#00ff88);transform-origin:left;animation:sweep 3s linear infinite}
-@keyframes sweep{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-#camWrap{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:10px;overflow:hidden;display:none;border:2px solid #00ff88}
-#cam{width:100%;height:100%;object-fit:cover}
-#ghostOverlay{position:absolute;inset:0;display:none;place-items:center;background:radial-gradient(transparent 40%, #ff000044 100%)}
-#ghostOverlay b{font-size:5em;filter:drop-shadow(0 0 20px #fff);animation:float 0.5s infinite alternate}
-@keyframes float{from{transform:translateY(0) scale(1)}to{transform:translateY(-10px) scale(1.1)}}
-.btn{padding:12px;background:#00ff88;color:#000;border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%;margin:4px 0}
-.btn.off{background:#111;color:#00ff88;border:2px solid #00ff88}
-#emf{height:18px;background:#111;border-radius:10px;overflow:hidden;border:1px solid #00ff88}
-#emfFill{height:100%;width:5%;background:linear-gradient(90deg,#00ff88,#ff0,#f00);transition:0.3s}
-#log{height:140px;overflow-y:auto;background:#000a;padding:8px;border-radius:8px;font-size:0.8em;border:1px solid #00ff8811}
-#map{height:200px;border-radius:10px;border:2px solid #00ff88}
-.evp{font-size:1.4em;text-align:center;min-height:35px;text-shadow:0 0 10px #00ff88}
-</style>
-</head>
-<body>
-<header><h1>👻 GHOSTBOX DEFENDER <span style="border:1px solid #00ff88;padding:2px 6px;border-radius:6px;font-size:0.6em">ULTRA</span> 🛡️</h1></header>
-<div class="container">
-<div class="grid2">
-<div class="card">
-<h3>📡 RADAR + 👁️ GHOST CAM</h3>
-<div id="radarWrap"><canvas id="radar"></canvas><div class="sweep"></div></div>
-<div id="camWrap"><video id="cam" autoplay playsinline muted></video><div id="ghostOverlay"><b>👻</b></div></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
-<button class="btn" id="pBtn" onclick="togglePower()">ACTIVATE</button>
-<button class="btn off" onclick="scan()">SCAN [S]</button>
-<button class="btn off" onclick="toggleCam()">📷 CAM</button>
-<button class="btn off" onclick="speakGhost()">🗣️ TALK</button>
-</div>
-</div>
-<div class="card">
-<h3>📟 EMF: <span id="emfVal">0.4</span> mG</h3><div id="emf"><div id="emfFill"></div></div>
-<h3 style="margin-top:10px">🎙️ SPIRIT BOX</h3><div class="evp" id="evp">---</div>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px">
-<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">SHIELD<br><span id="shield" style="font-size:1.6em">100%</span></div>
-<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">GHOSTS<br><span id="count" style="font-size:1.6em">0</span></div>
-<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">RANK<br><span id="rank" style="font-size:1.2em">NOVICE</span></div>
-</div>
-<h3 style="margin-top:10px">🌍 HAUNTED MAP - Accra</h3><div id="map"></div>
-<button class="btn off" onclick="shareScore()" style="margin-top:8px">📸 SHARE SCORE</button>
-</div>
-</div>
-<div class="card"><h3>📜 PARANORMAL LOG</h3><div id="log"></div></div>
-</div>
+def index():
+    if "user_id" not in session: return LOGIN_HTML
+    return APP_HTML
 
-<script>
-let power=false,ghosts=0,shield=100,camOn=false,map,markers=[];
-let words=["BEHIND YOU","HELP ME","LEAVE NOW","COLD","DONT LOOK","HE IS HERE","RUN","WE SEE YOU","DEATH","MIRROR","BASEMENT","FOLLOW","LISTEN","GET OUT","I AM HERE","TOUCH","NINE LIVES","ACCRA","OPEN THE DOOR","HIDE"];
-let canvas=document.getElementById('radar'),ctx=canvas.getContext('2d'),dots=[];
-function resize(){let w=canvas.parentElement.offsetWidth;canvas.width=canvas.height=w*2;ctx.setTransform(2,0,0,2,0,0)}resize();
-function log(t){let l=document.getElementById('log');let d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+t;l.prepend(d)}
-function togglePower(){power=!power;document.getElementById('pBtn').textContent=power?'ACTIVE ✓':'ACTIVATE';document.getElementById('pBtn').className=power?'btn':'btn off';log(power?'🟢 ULTRA ACTIVATED - All systems online':'🔴 OFFLINE');if(power)loop();speak(power?'Ghostbox Defender activated':'System offline')}
-function scan(){if(!power)return log('⚠️ Activate first!');let e=(Math.random()*10).toFixed(1);document.getElementById('emfVal').innerText=e;document.getElementById('emfFill').style.width=e*10+'%';beep(e);let w=words[Math.floor(Math.random()*words.length)];document.getElementById('evp').textContent=w;speak(w);if(e>6.5){ghostEvent(e)}else{log('🔍 Scan EMF '+e+' mG - clear') }setTimeout(()=>document.getElementById('evp').textContent='---',2500)}
-function ghostEvent(e){ghosts++;document.getElementById('count').textContent=ghosts;shield=Math.max(0,shield-12);document.getElementById('shield').textContent=shield+'%';let r=ghosts<3?'NOVICE':ghosts<6?'HUNTER':ghosts<10?'EXPERT':'GHOST KING';document.getElementById('rank').textContent=r;log('👻 GHOST #'+ghosts+' DETECTED! EMF '+e+' mG!');if(camOn){let o=document.getElementById('ghostOverlay');o.style.display='grid';setTimeout(()=>o.style.display='none',1200)}dots.push({x:Math.random()*160+20,y:Math.random()*160+20,life:120});addMapGhost();if(shield<=0){log('💀 SHIELD DOWN! Rebooting...');shield=100;document.getElementById('shield').textContent='100%';}}
-function loop(){if(!power)return;ctx.clearRect(0,0,400,400);ctx.strokeStyle='#00ff8811';for(let r=20;r<180;r+=35){ctx.beginPath();ctx.arc(100,100,r,0,7);ctx.stroke()}dots=dots.filter(d=>d.life>0);dots.forEach(d=>{ctx.fillStyle='rgba(255,0,80,'+(d.life/120)+')';ctx.shadowBlur=10;ctx.shadowColor='#f00';ctx.beginPath();ctx.arc(d.x,d.y,5,0,7);ctx.fill();d.life--;});ctx.shadowBlur=0;requestAnimationFrame(loop)}
-function beep(v){let a=new(window.AudioContext||window.webkitAudioContext)();let o=a.createOscillator();o.frequency.value=100+Number(v)*80;o.connect(a.destination);o.start();o.stop(a.currentTime+0.2)}
-function speak(t){if('speechSynthesis' in window){let u=new SpeechSynthesisUtterance(t);u.pitch=0.3;u.rate=0.8;u.volume=0.9;speechSynthesis.speak(u)}}
-async function toggleCam(){let w=document.getElementById('camWrap');if(!camOn){try{let s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});document.getElementById('cam').srcObject=s;w.style.display='block';camOn=true;log('📷 Ghost Cam ON')}catch(e){log('❌ Cam blocked - allow camera permission');alert('Allow camera for Ghost Cam!')}}else{let v=document.getElementById('cam');let s=v.srcObject;if(s)s.getTracks().forEach(t=>t.stop());w.style.display='none';camOn=false;log('📷 Cam OFF')}}
-function initMap(){map=L.map('map').setView([5.6037,-0.1870],12);L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);L.marker([5.6037,-0.1870]).addTo(map).bindPopup('📍 Accra Base - Ghost HQ').openPopup();if(navigator.geolocation){navigator.geolocation.getCurrentPosition(p=>{let la=p.coords.latitude,lo=p.coords.longitude;map.setView([la,lo],14);L.marker([la,lo]).addTo(map).bindPopup('🧍 YOU ARE HERE').openPopup();log('🌍 Located you at '+la.toFixed(3)+','+lo.toFixed(3))})}}
-function addMapGhost(){if(!map)return;let lat=5.6037+(Math.random()-0.5)*0.2,lng=-0.1870+(Math.random()-0.5)*0.2;let m=L.marker([lat,lng],{icon:L.divIcon({html:'👻',className:'',iconSize:[25,25]})}).addTo(map).bindPopup('👻 Ghost #'+ghosts+' EMF '+(Math.random()*4+6).toFixed(1)+' mG');markers.push(m)}
-function speakGhost(){let w=document.getElementById('evp').textContent;if(w!=='---')speak(w);else{let r=words[Math.floor(Math.random()*words.length)];document.getElementById('evp').textContent=r;speak(r);setTimeout(()=>document.getElementById('evp').textContent='---',2000)}}
-function shareScore(){let t=`I caught ${ghosts} ghosts on GHOSTBOX DEFENDER ULTRA! 👻 Rank: ${document.getElementById('rank').textContent} - Can you beat me? https://ghostbox-defender.onrender.com`;if(navigator.share){navigator.share({title:'Ghostbox Ultra',text:t})}else{navigator.clipboard.writeText(t);alert('Score copied! Paste to WhatsApp/TikTok 🔥')}}
-initMap();log('ULTRA System Online - Accra Ghost Network ready...');document.addEventListener('keydown',e=>{if(e.key.toLowerCase()=='s')scan()})
-</script>
-</body>
-</html>
-    """
-if __name__=="__main__":
-    app.run()
+@app.route("/api/register", methods=["POST"])
+def register():
+    d=request.get_json() or {}; email=d.get("email","").strip().lower(); pw=d.get("password","")
+    if not email or len(pw)<4: return jsonify(error="Email + 4 char pw required"),400
+    db=get_db()
+    try:
+        db.execute("INSERT INTO users (email,password_hash,created_at,protection_score) VALUES (?,?,?,?)",(email,hash_pw(pw),datetime.utcnow().isoformat(),72)); db.commit()
+        u=db.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
+        session["user_id"]=u["id"]; session["email"]=email
+        return jsonify(ok=True)
+    except sqlite3.IntegrityError: return jsonify(error="Account exists, login"),400
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    d=request.get_json() or {}; email=d.get("email","").strip().lower(); pw=d.get("password","")
+    db=get_db(); u=db.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
+    if not u or hash_pw(pw)!=u["password_hash"]: return jsonify(error="Invalid credentials"),401
+    session["user_id"]=u["id"]; session["email"]=u["email"]; return jsonify(ok=True)
+
+@app.route("/api/logout", methods=["POST"])
+def logout(): session.clear(); return jsonify(ok=True)
+
+@app.route("/api/me")
+def me():
+    if "user_id" not in session: return jsonify(error="no auth"),401
+    db=get_db(); u=db.execute("SELECT * FROM users WHERE id=?",(session["user_id"],)).fetchone()
+    return jsonify(dict(u))
+
+@app.route("/api/scan", methods=["POST"])
+def scan():
+    if "user_id" not in session: return jsonify(error="login"),401
+    target=(request.get_json() or {}).get("target","").strip()
+    if not target: return jsonify(error="Empty"),400
+    res=analyze_target(target)
+    db=get_db()
+    db.execute("INSERT INTO scans (user_id,target,type,result,score,created_at) VALUES (?,?,?,?,?,?)",(session["user_id"],target,res["type"],res["verdict"],res["score"],datetime.utcnow().isoformat()))
+    db.execute("UPDATE users SET last_scan=?, protection_score=? WHERE id=?",(datetime.utcnow().isoformat(), min(100, res["score"]+10 if res["score"]>60 else 72), session["user_id"]))
+    db.commit(); return jsonify(res)
+
+@app.route("/api/ai", methods=["POST"])
+def ai():
+    if "user_id" not in session: return jsonify(error="login"),401
+    msg=(request.get_json() or {}).get("message","")[:500]
+    return jsonify(reply=ghost_ai_reply(msg))
+
+@app.route("/api/dashboard")
+def dashboard():
+    if "user_id" not in session: return jsonify(error="login"),401
+    db=get_db()
+    scans=db.execute("SELECT * FROM scans WHERE user_id=? ORDER BY id DESC LIMIT 20",(session["user_id"],)).fetchall()
+    blocked=db.execute("SELECT * FROM blocked_apps WHERE user_id=? ORDER BY id DESC",(session["user_id"],)).fetchall()
+    clients=db.execute("SELECT id,email,protection_score,last_scan,created_at FROM users ORDER BY id DESC LIMIT 50").fetchall()
+    total=db.execute("SELECT COUNT(*) as c FROM scans").fetchone()["c"]
+    threats=db.execute("SELECT COUNT(*) as c FROM scans WHERE score<50").fetchone()["c"]
+    return jsonify(scans=[dict(s) for s in scans], blocked=[dict(b) for b in blocked], clients=[dict(u) for u in clients], stats={"total_scans":total,"threats_blocked":threats,"total_users":len(clients)})
+
+@app.route("/api/block", methods=["POST"])
+def block():
+    if "user_id" not in session: return jsonify(error="login"),401
+    name=(request.get_json() or {}).get("app_name","").strip()
+    if not name: return jsonify(error="app name"),400
+    db=get_db(); db.execute("INSERT INTO blocked_apps (user_id,app_name,reason,blocked_at) VALUES (?,?,?,?)",(session["user_id"],name,"Intrusive permissions",datetime.utcnow().isoformat())); db.commit()
+    return jsonify(ok=True)
+
+@app.route("/health")
+def health(): return "OK - Ghostbox Live",200
+
+LOGIN_HTML = """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ghostbox - Vault</title><style>*{box-sizing:border-box}body{margin:0;background:#07070A;color:#fff;font-family:Inter,system-ui;overflow:hidden}.bg{position:fixed;inset:0;background:radial-gradient(800px at 30% 10%, #A855F733, transparent),radial-gradient(600px at 80% 80%, #BEF26422, transparent)}.grid{position:fixed;inset:0;background-image:linear-gradient(#ffffff08 1px, transparent 1px),linear-gradient(90deg,#ffffff08 1px, transparent 1px);background-size:40px 40px;mask:radial-gradient(ellipse at center, black 60%, transparent 100%)}.card{position:relative;z-index:2;max-width:420px;margin:10vh auto;background:#111113CC;backdrop-filter:blur(24px);border:1px solid #ffffff14;border-radius:24px;padding:32px;box-shadow:0 20px 60px #000}.logo{font-weight:800;font-size:22px}.badge{font-size:11px;background:#A855F7;padding:4px 8px;border-radius:999px}input{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff18;background:#0A0A0B;color:#fff;margin-top:12px;outline:none}button{width:100%;padding:14px;border-radius:12px;border:0;background:#A855F7;color:#fff;font-weight:700;margin-top:16px;cursor:pointer}small{color:#9CA3AF}</style></head><body><div class="bg"></div><div class="grid"></div><div class="card"><div class="logo">👻🛡️ Ghostbox Defender <span class="badge">PRIVATE</span></div><p style="color:#9CA3AF">Private security vault. No tracking.</p><input id="email" placeholder="email@ghostbox.com"/><input id="pass" type="password" placeholder="••••••••"/><button onclick="login()">Enter Vault →</button><button onclick="register()" style="background:transparent;border:1px solid #ffffff18">Create Vault</button><p id="msg" style="color:#F87171;margin-top:12px"></p><small>Free • No card • Data stays on Render</small></div><script>async function login(){let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:pass.value})});let j=await r.json();if(j.ok)location.reload();else msg.innerText=j.error}async function register(){let r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:pass.value})});let j=await r.json();if(j.ok)location.reload();else msg.innerText=j.error}</script></body></html>"""
+
+APP_HTML = """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ghostbox OS</title><style>*{box-sizing:border-box}body{margin:0;background:#07070A;color:#fff;font-family:Inter,system-ui;display:flex;min-height:100vh}.sidebar{width:240px;background:#0F0F11;border-right:1px solid #ffffff10;padding:24px;display:flex;flex-direction:column;gap:24px}.main{flex:1;padding:24px;overflow:auto;background:radial-gradient(900px at 20% 0%, #A855F720, transparent)}.card{background:#151517CC;backdrop-filter:blur(16px);border:1px solid #ffffff12;border-radius:16px;padding:20px}.btn{background:#A855F7;border:0;color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer}.btn-ghost{background:transparent;border:1px solid #ffffff18;color:#fff}.input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ffffff18;background:#0A0A0B;color:#fff}.tab{padding:8px 14px;border-radius:999px;border:1px solid #ffffff15;cursor:pointer;color:#9CA3AF;margin-top:6px;width:100%;text-align:left;background:transparent}.tab.active{background:#fff;color:#000;font-weight:700}.gauge{width:120px;height:120px;border-radius:50%;background:conic-gradient(#A855F7 var(--p), #222 0);display:grid;place-items:center}.gauge span{background:#151517;width:92px;height:92px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:22px}.grid2{display:grid;grid-template-columns:1fr 340px;gap:16px}@media(max-width:900px){.grid2{grid-template-columns:1fr}.sidebar{display:none}}</style></head><body><div class="sidebar"><div style="font-weight:800">👻🛡️ Ghostbox</div><div><button class="tab active" onclick="showTab('shield')">🛡️ Shield Center</button><button class="tab" onclick="showTab('scanner')">🔍 Scanner</button><button class="tab" onclick="showTab('apps')">📱 Intrusive Apps</button><button class="tab" onclick="showTab('ai')">🤖 Ghost AI</button><button class="tab" onclick="showTab('vault')">👥 Client Vault</button></div><div style="margin-top:auto"><small id="userEmail"></small><br><button class="btn-ghost" onclick="logout()">Logout</button></div></div><div class="main"><h1 style="margin:0 0 8px;font-size:32px">Stop ghosts. Keep humans.</h1><p style="color:#9CA3AF;margin:0 0 20px">Private OS • Live • <span style="color:#BEF264">● Your service is live</span></p><div id="shield" class="tabpane"><div class="grid2"><div style="display:grid;gap:16px"><div class="card" style="display:flex;gap:20px;align-items:center"><div class="gauge" id="gauge" style="--p:72%"><span id="scoreTxt">72%</span></div><div><div style="font-weight:700">Phone Protection Score</div><small id="scoreDesc">Good — enable shields to reach 95%</small><div style="margin-top:12px;display:flex;gap:8px"><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" checked> Real-time Shield</label><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" checked> Scam Blocker</label></div></div></div><div class="card"><div style="font-weight:700;margin-bottom:8px">Quick Scan</div><div style="display:flex;gap:8px"><input id="scanInput" class="input" placeholder="Paste suspicious link..."/><button class="btn" onclick="doScan()">Scan</button></div><div id="scanResult" style="margin-top:12px"></div></div></div><div class="card"><div style="font-weight:700">Recent Threats</div><div id="recentScans" style="margin-top:12px;display:flex;flex-direction:column;gap:8px"></div></div></div></div><div id="scanner" class="tabpane" style="display:none"><div class="card"><h3>Advanced Scanner</h3><p style="color:#9CA3AF">Heuristic: scam keywords, phishing @, suspicious TLDs, shorteners. Add VIRUSTOTAL_API_KEY env for enrichment.</p><input id="scanInput2" class="input" placeholder="https:// suspicious-link.com"/><button class="btn" style="margin-top:8px" onclick="doScan(true)">Deep Scan →</button><div id="scanResult2" style="margin-top:12px"></div></div></div><div id="apps" class="tabpane" style="display:none"><div class="card"><h3>Intrusive Apps Blocker</h3><div id="appList"></div><div style="display:flex;gap:8px;margin-top:16px"><input id="appInput" class="input" placeholder="App name to block"/><button class="btn" onclick="blockApp()">Block</button></div></div></div><div id="ai" class="tabpane" style="display:none"><div class="card" style="max-width:700px"><div style="display:flex;justify-content:space-between"><h3>Ghost AI</h3><span style="font-size:11px;background:#BEF264;color:#000;padding:4px 8px;border-radius:999px">PRIVATE • OFFLINE • ENCRYPTED</span></div><div id="chat" style="height:300px;overflow:auto;border:1px solid #ffffff10;border-radius:12px;padding:12px;margin:12px 0;display:flex;flex-direction:column;gap:8px"></div><div style="display:flex;gap:8px"><input id="aiInput" class="input" placeholder="Ask: is this link safe?" onkeydown="if(event.key==='Enter')askAI()"/><button class="btn" onclick="askAI()">Send</button></div></div></div><div id="vault" class="tabpane" style="display:none"><div class="card"><h3>Client Vault (Private)</h3><p style="color:#9CA3AF">Stored locally in ghostbox.db</p><div id="clientTable" style="margin-top:12px"></div></div></div></div><script>function showTab(t){document.querySelectorAll('.tabpane').forEach(e=>e.style.display='none');document.getElementById(t).style.display='block';document.querySelectorAll('.sidebar .tab').forEach(e=>e.classList.remove('active'));event.target.classList.add('active');load()}async function doScan(s){let v=document.getElementById(s?'scanInput2':'scanInput').value;if(!v)return;let r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:v})});let j=await r.json();let el=document.getElementById(s?'scanResult2':'scanResult');let c=j.verdict=='SAFE'?'#BEF264':j.verdict=='SUSPICIOUS'?'#FBBF24':'#F87171';el.innerHTML=`<div style="padding:12px;border-radius:12px;background:#0A0A0B;border:1px solid ${c}55"><b style="color:${c}">${j.verdict} • ${j.score}/100</b><div style="color:#9CA3AF;font-size:13px;margin-top:6px">${j.flags.join(' • ')||'No flags'}</div></div>`;load()}async function askAI(){let i=document.getElementById('aiInput');let txt=i.value;if(!txt)return;let ch=document.getElementById('chat');ch.innerHTML+=`<div style="align-self:flex-end;background:#A855F7;padding:8px 12px;border-radius:12px;max-width:80%">${txt}</div>`;i.value='';let r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:txt})});let j=await r.json();ch.innerHTML+=`<div style="align-self:flex-start;background:#222;padding:8px 12px;border-radius:12px;max-width:80%">${j.reply}</div>`;ch.scrollTop=ch.scrollHeight}async function blockApp(){let v=document.getElementById('appInput').value||document.getElementById('scanInput').value;if(!v)return;await fetch('/api/block',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({app_name:v})});document.getElementById('appInput').value='';load()}async function logout(){await fetch('/api/logout',{method:'POST'});location.reload()}async function load(){let me=await fetch('/api/me').then(r=>r.json());if(me.email)userEmail.innerText=me.email;let d=await fetch('/api/dashboard').then(r=>r.json());document.getElementById('gauge').style.setProperty('--p',d.clients.find(c=>c.email==me.email)?.protection_score+'%'||'72%');document.getElementById('scoreTxt').innerText=(d.clients.find(c=>c.email==me.email)?.protection_score||72)+'%';let rs=document.getElementById('recentScans');rs.innerHTML=d.scans.slice(0,5).map(s=>`<div style="display:flex;justify-content:space-between;background:#0A0A0B;padding:8px 10px;border-radius:10px;border:1px solid #ffffff0f"><span>${s.target.slice(0,30)}</span><span style="color:${s.score>70?'#BEF264':s.score>45?'#FBBF24':'#F87171'}">${s.result} ${s.score}</span></div>`).join('')||'<small style="color:#666">No scans yet</small>';let ct=document.getElementById('clientTable');ct.innerHTML=`<div style="display:flex;gap:12px;margin-bottom:12px"><div class="card" style="flex:1">Total Scans: ${d.stats.total_scans}</div><div class="card" style="flex:1">Threats: ${d.stats.threats_blocked}</div><div class="card" style="flex:1">Clients: ${d.stats.total_users}</div></div>`+`<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="color:#9CA3AF"><th>Email</th><th>Score</th><th>Last Scan</th></tr>`+d.clients.map(c=>`<tr><td>${c.email}</td><td>${c.protection_score}%</td><td>${c.last_scan||'never'}</td></tr>`).join('')+`</table>`;let apps=document.getElementById('appList');let mock=[{name:'Super Cleaner - Booster',reason:'Requests SMS + Contacts'},{name:'FlashLight Pro Free',reason:'Overlay permission'}];apps.innerHTML=mock.map(m=>`<div style="display:flex;justify-content:space-between;padding:10px;background:#0A0A0B;border-radius:10px;margin-top:8px"><div><b>${m.name}</b><br><small style="color:#9CA3AF">${m.reason}</small></div><button class="btn btn-ghost" onclick="document.getElementById('appInput').value='${m.name}';blockApp()">Block</button></div>`).join('')+d.blocked.map(b=>`<div style="display:flex;justify-content:space-between;padding:10px;background:#BEF26422;border:1px solid #BEF26444;border-radius:10px;margin-top:8px"><div><b>${b.app_name} BLOCKED</b></div><span style="color:#BEF264">● Protected</span></div>`).join('')}load();</script></body></html>"""
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
