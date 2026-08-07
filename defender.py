@@ -7,79 +7,89 @@ def home():
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GHOSTBOX DEFENDER PRO</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>GHOSTBOX DEFENDER ULTRA</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Share Tech Mono',monospace}
-body{background:#020602;color:#00ff88;min-height:100vh;overflow-x:hidden}
-#bg{position:fixed;inset:0;background:radial-gradient(circle at 50% 50%, #003d1f11 0%, #000 70%);z-index:-1}
-header{padding:15px;text-align:center;border-bottom:2px solid #00ff8844;box-shadow:0 0 20px #00ff8833;background:#000a}
-h1{font-size:2.2em;text-shadow:0 0 15px #00ff88, 0 0 30px #00ff88;letter-spacing:3px}
-.container{max-width:900px;margin:0 auto;padding:15px;display:grid;gap:15px}
-.card{background:#000c;border:2px solid #00ff88; border-radius:15px; padding:15px; box-shadow:0 0 20px #00ff8822, inset 0 0 20px #00ff8808}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:15px}
-@media(max-width:600px){.grid2{grid-template-columns:1fr} h1{font-size:1.5em}}
-#radarWrap{position:relative;aspect-ratio:1;max-width:400px;margin:0 auto;width:100%;background:radial-gradient(#001a0a, #000);border-radius:50%;border:2px solid #00ff88;overflow:hidden;box-shadow:0 0 40px #00ff8844}
-#radar{width:100%;height:100%;display:block}
-#emf{height:20px;background:#111;border-radius:10px;overflow:hidden;border:1px solid #00ff88}
-#emfFill{height:100%;width:10%;background:linear-gradient(90deg,#00ff88,#ffff00,#ff0000);transition:width 0.3s;box-shadow:0 0 10px #00ff88}
-.btn{padding:14px;background:#00ff88;color:#000;border:none;border-radius:8px;font-weight:bold;font-size:1.1em;cursor:pointer;box-shadow:0 0 15px #00ff88;transition:0.2s;width:100%}
-.btn:hover{transform:scale(1.03);box-shadow:0 0 25px #00ff88}
-.btn.off{background:#111;color:#00ff88;border:2px solid #00ff88;box-shadow:none}
-#log{height:160px;overflow-y:auto;background:#000a;padding:10px;border-radius:8px;font-size:0.85em;border:1px solid #00ff8822}
-.logEntry{margin:3px 0;opacity:0.9;animation:fadeIn 0.3s}
-@keyframes fadeIn{from{opacity:0;transform:translateX(-10px)}to{opacity:0.9;transform:translateX(0)}}
-#ghostAlert{position:fixed;top:0;left:0;right:0;bottom:0;background:#ff0000aa;display:none;place-items:center;z-index:999;font-size:3em;color:#fff;animation:flash 0.2s infinite}
-@keyframes flash{0%,100%{background:#ff0000cc}50%{background:#000}}
-.evp{font-size:1.6em;text-align:center;min-height:40px;letter-spacing:2px;text-shadow:0 0 10px #00ff88}
+body{background:#000;color:#00ff88;overflow-x:hidden}
+header{padding:12px;text-align:center;border-bottom:2px solid #00ff88;background:#000c;position:sticky;top:0;z-index:100}
+h1{font-size:1.8em;text-shadow:0 0 15px #00ff88}
+.container{max-width:1000px;margin:0 auto;padding:10px;display:grid;gap:10px}
+.card{background:#000e;border:2px solid #00ff88;border-radius:12px;padding:12px;box-shadow:0 0 20px #00ff8833}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+#radarWrap{position:relative;aspect-ratio:1;width:100%;max-width:380px;margin:auto;background:radial-gradient(#001a0a,#000);border-radius:50%;border:2px solid #00ff88;overflow:hidden}
+#radar{width:100%;height:100%}
 .sweep{position:absolute;top:50%;left:50%;width:50%;height:2px;background:linear-gradient(90deg,transparent,#00ff88);transform-origin:left;animation:sweep 3s linear infinite}
-@keyframes sweep{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes sweep{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+#camWrap{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:10px;overflow:hidden;display:none;border:2px solid #00ff88}
+#cam{width:100%;height:100%;object-fit:cover}
+#ghostOverlay{position:absolute;inset:0;display:none;place-items:center;background:radial-gradient(transparent 40%, #ff000044 100%)}
+#ghostOverlay b{font-size:5em;filter:drop-shadow(0 0 20px #fff);animation:float 0.5s infinite alternate}
+@keyframes float{from{transform:translateY(0) scale(1)}to{transform:translateY(-10px) scale(1.1)}}
+.btn{padding:12px;background:#00ff88;color:#000;border:none;border-radius:8px;font-weight:bold;cursor:pointer;width:100%;margin:4px 0}
+.btn.off{background:#111;color:#00ff88;border:2px solid #00ff88}
+#emf{height:18px;background:#111;border-radius:10px;overflow:hidden;border:1px solid #00ff88}
+#emfFill{height:100%;width:5%;background:linear-gradient(90deg,#00ff88,#ff0,#f00);transition:0.3s}
+#log{height:140px;overflow-y:auto;background:#000a;padding:8px;border-radius:8px;font-size:0.8em;border:1px solid #00ff8811}
+#map{height:200px;border-radius:10px;border:2px solid #00ff88}
+.evp{font-size:1.4em;text-align:center;min-height:35px;text-shadow:0 0 10px #00ff88}
 </style>
 </head>
 <body>
-<div id="bg"></div>
-<div id="ghostAlert">👻 GHOST DETECTED! 👻</div>
-<header><h1>👻 GHOSTBOX DEFENDER <span style="font-size:0.6em;vertical-align:super;border:1px solid #00ff88;padding:2px 6px;border-radius:5px">PRO</span> 🛡️</h1></header>
-
+<header><h1>👻 GHOSTBOX DEFENDER <span style="border:1px solid #00ff88;padding:2px 6px;border-radius:6px;font-size:0.6em">ULTRA</span> 🛡️</h1></header>
 <div class="container">
- <div class="grid2">
-  <div class="card">
-   <h3>📡 RADAR</h3>
-   <div id="radarWrap"><canvas id="radar"></canvas><div class="sweep"></div></div>
-   <div style="display:flex;gap:10px;margin-top:10px"><button class="btn" id="activateBtn" onclick="togglePower()">ACTIVATE DEFENDER</button><button class="btn off" onclick="scan()">SCAN [S]</button></div>
-  </div>
-  <div class="card">
-   <h3>📟 EMF METER: <span id="emfVal">1.2</span> mG</h3>
-   <div id="emf"><div id="emfFill"></div></div>
-   <h3 style="margin-top:15px">🎙️ SPIRIT BOX</h3>
-   <div class="evp" id="evp">---</div>
-   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-    <div class="card" style="padding:8px;text-align:center">SHIELD<br><span id="shield" style="font-size:1.8em">100%</span></div>
-    <div class="card" style="padding:8px;text-align:center">GHOSTS<br><span id="count" style="font-size:1.8em">0</span></div>
-   </div>
-  </div>
- </div>
- <div class="card">
-  <h3>📜 PARANORMAL LOG</h3>
-  <div id="log"></div>
- </div>
+<div class="grid2">
+<div class="card">
+<h3>📡 RADAR + 👁️ GHOST CAM</h3>
+<div id="radarWrap"><canvas id="radar"></canvas><div class="sweep"></div></div>
+<div id="camWrap"><video id="cam" autoplay playsinline muted></video><div id="ghostOverlay"><b>👻</b></div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+<button class="btn" id="pBtn" onclick="togglePower()">ACTIVATE</button>
+<button class="btn off" onclick="scan()">SCAN [S]</button>
+<button class="btn off" onclick="toggleCam()">📷 CAM</button>
+<button class="btn off" onclick="speakGhost()">🗣️ TALK</button>
+</div>
+</div>
+<div class="card">
+<h3>📟 EMF: <span id="emfVal">0.4</span> mG</h3><div id="emf"><div id="emfFill"></div></div>
+<h3 style="margin-top:10px">🎙️ SPIRIT BOX</h3><div class="evp" id="evp">---</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px">
+<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">SHIELD<br><span id="shield" style="font-size:1.6em">100%</span></div>
+<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">GHOSTS<br><span id="count" style="font-size:1.6em">0</span></div>
+<div style="text-align:center;border:1px solid #00ff88;padding:6px;border-radius:8px">RANK<br><span id="rank" style="font-size:1.2em">NOVICE</span></div>
+</div>
+<h3 style="margin-top:10px">🌍 HAUNTED MAP - Accra</h3><div id="map"></div>
+<button class="btn off" onclick="shareScore()" style="margin-top:8px">📸 SHARE SCORE</button>
+</div>
+</div>
+<div class="card"><h3>📜 PARANORMAL LOG</h3><div id="log"></div></div>
 </div>
 
 <script>
-let power=false,ghosts=0,shield=100,evpWords=["BEHIND YOU","HELP ME","LEAVE","COLD","DONT LOOK","HE IS HERE","RUN","WE SEE YOU","DEATH","MIRROR","BASEMENT","FOLLOW","LISTEN","IT HURTS","GET OUT","I AM HERE","TOUCH","NINE","OPEN","HIDE"];
-let canvas=document.getElementById('radar'), ctx=canvas.getContext('2d'), dots=[];
-function resize(){canvas.width=canvas.height=canvas.offsetWidth*2; ctx.scale(2,2)}; resize(); window.onresize=resize;
-function addLog(t){let l=document.getElementById('log'); let d=document.createElement('div'); d.className='logEntry'; d.innerHTML=`[${new Date().toLocaleTimeString()}] ${t}`; l.prepend(d); if(l.children.length>30)l.lastChild.remove();}
-function togglePower(){power=!power; let b=document.getElementById('activateBtn'); b.textContent=power?'DEFENDER ACTIVE ✓':'ACTIVATE DEFENDER'; b.className=power?'btn':'btn off'; addLog(power?'🟢 DEFENDER ACTIVATED - Shield online':'🔴 DEFENDER OFFLINE'); if(power)loop();}
-function scan(){if(!power)return addLog('⚠️ Activate defender first!'); let e=(Math.random()*9+1).toFixed(1); document.getElementById('emfVal').innerText=e; document.getElementById('emfFill').style.width=e*10+'%'; if(e>7){ghostEvent()} else addLog(`🔍 Scan complete - EMF ${e} mG - No threats`); document.getElementById('evp').textContent=evpWords[Math.floor(Math.random()*evpWords.length)]; setTimeout(()=>document.getElementById('evp').textContent='---',3000);}
-function ghostEvent(){ghosts++; document.getElementById('count').textContent=ghosts; shield=Math.max(0,shield-10); document.getElementById('shield').textContent=shield+'%'; addLog(`👻 GHOST DETECTED! EMF ${document.getElementById('emfVal').innerText} mG!`); let a=document.getElementById('ghostAlert'); a.style.display='grid'; setTimeout(()=>a.style.display='none',800); dots.push({x:Math.random()*180+10,y:Math.random()*180+10,life:100}); if(shield<=0){addLog('💀 SHIELD FAILED! Rebooting...'); shield=100;}}
-function loop(){if(!power)return; ctx.clearRect(0,0,400,400); ctx.strokeStyle='#00ff8811'; for(let r=20;r<200;r+=40){ctx.beginPath();ctx.arc(100,100,r,0,Math.PI*2);ctx.stroke();} dots=dots.filter(d=>d.life>0); dots.forEach(d=>{ctx.fillStyle=`rgba(255,0,80,${d.life/100})`;ctx.shadowBlur=10;ctx.shadowColor='#ff0044';ctx.beginPath();ctx.arc(d.x,d.y,4,0,7);ctx.fill();d.life-=1;ctx.shadowBlur=0;}); if(Math.random()<0.03)document.getElementById('emfVal').innerText=(Math.random()*3+0.5).toFixed(1); requestAnimationFrame(loop);}
-addLog('System Online - Waiting for activation...'); document.addEventListener('keydown',e=>{if(e.key.toLowerCase()=='s')scan();});
+let power=false,ghosts=0,shield=100,camOn=false,map,markers=[];
+let words=["BEHIND YOU","HELP ME","LEAVE NOW","COLD","DONT LOOK","HE IS HERE","RUN","WE SEE YOU","DEATH","MIRROR","BASEMENT","FOLLOW","LISTEN","GET OUT","I AM HERE","TOUCH","NINE LIVES","ACCRA","OPEN THE DOOR","HIDE"];
+let canvas=document.getElementById('radar'),ctx=canvas.getContext('2d'),dots=[];
+function resize(){let w=canvas.parentElement.offsetWidth;canvas.width=canvas.height=w*2;ctx.setTransform(2,0,0,2,0,0)}resize();
+function log(t){let l=document.getElementById('log');let d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+t;l.prepend(d)}
+function togglePower(){power=!power;document.getElementById('pBtn').textContent=power?'ACTIVE ✓':'ACTIVATE';document.getElementById('pBtn').className=power?'btn':'btn off';log(power?'🟢 ULTRA ACTIVATED - All systems online':'🔴 OFFLINE');if(power)loop();speak(power?'Ghostbox Defender activated':'System offline')}
+function scan(){if(!power)return log('⚠️ Activate first!');let e=(Math.random()*10).toFixed(1);document.getElementById('emfVal').innerText=e;document.getElementById('emfFill').style.width=e*10+'%';beep(e);let w=words[Math.floor(Math.random()*words.length)];document.getElementById('evp').textContent=w;speak(w);if(e>6.5){ghostEvent(e)}else{log('🔍 Scan EMF '+e+' mG - clear') }setTimeout(()=>document.getElementById('evp').textContent='---',2500)}
+function ghostEvent(e){ghosts++;document.getElementById('count').textContent=ghosts;shield=Math.max(0,shield-12);document.getElementById('shield').textContent=shield+'%';let r=ghosts<3?'NOVICE':ghosts<6?'HUNTER':ghosts<10?'EXPERT':'GHOST KING';document.getElementById('rank').textContent=r;log('👻 GHOST #'+ghosts+' DETECTED! EMF '+e+' mG!');if(camOn){let o=document.getElementById('ghostOverlay');o.style.display='grid';setTimeout(()=>o.style.display='none',1200)}dots.push({x:Math.random()*160+20,y:Math.random()*160+20,life:120});addMapGhost();if(shield<=0){log('💀 SHIELD DOWN! Rebooting...');shield=100;document.getElementById('shield').textContent='100%';}}
+function loop(){if(!power)return;ctx.clearRect(0,0,400,400);ctx.strokeStyle='#00ff8811';for(let r=20;r<180;r+=35){ctx.beginPath();ctx.arc(100,100,r,0,7);ctx.stroke()}dots=dots.filter(d=>d.life>0);dots.forEach(d=>{ctx.fillStyle='rgba(255,0,80,'+(d.life/120)+')';ctx.shadowBlur=10;ctx.shadowColor='#f00';ctx.beginPath();ctx.arc(d.x,d.y,5,0,7);ctx.fill();d.life--;});ctx.shadowBlur=0;requestAnimationFrame(loop)}
+function beep(v){let a=new(window.AudioContext||window.webkitAudioContext)();let o=a.createOscillator();o.frequency.value=100+Number(v)*80;o.connect(a.destination);o.start();o.stop(a.currentTime+0.2)}
+function speak(t){if('speechSynthesis' in window){let u=new SpeechSynthesisUtterance(t);u.pitch=0.3;u.rate=0.8;u.volume=0.9;speechSynthesis.speak(u)}}
+async function toggleCam(){let w=document.getElementById('camWrap');if(!camOn){try{let s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});document.getElementById('cam').srcObject=s;w.style.display='block';camOn=true;log('📷 Ghost Cam ON')}catch(e){log('❌ Cam blocked - allow camera permission');alert('Allow camera for Ghost Cam!')}}else{let v=document.getElementById('cam');let s=v.srcObject;if(s)s.getTracks().forEach(t=>t.stop());w.style.display='none';camOn=false;log('📷 Cam OFF')}}
+function initMap(){map=L.map('map').setView([5.6037,-0.1870],12);L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);L.marker([5.6037,-0.1870]).addTo(map).bindPopup('📍 Accra Base - Ghost HQ').openPopup();if(navigator.geolocation){navigator.geolocation.getCurrentPosition(p=>{let la=p.coords.latitude,lo=p.coords.longitude;map.setView([la,lo],14);L.marker([la,lo]).addTo(map).bindPopup('🧍 YOU ARE HERE').openPopup();log('🌍 Located you at '+la.toFixed(3)+','+lo.toFixed(3))})}}
+function addMapGhost(){if(!map)return;let lat=5.6037+(Math.random()-0.5)*0.2,lng=-0.1870+(Math.random()-0.5)*0.2;let m=L.marker([lat,lng],{icon:L.divIcon({html:'👻',className:'',iconSize:[25,25]})}).addTo(map).bindPopup('👻 Ghost #'+ghosts+' EMF '+(Math.random()*4+6).toFixed(1)+' mG');markers.push(m)}
+function speakGhost(){let w=document.getElementById('evp').textContent;if(w!=='---')speak(w);else{let r=words[Math.floor(Math.random()*words.length)];document.getElementById('evp').textContent=r;speak(r);setTimeout(()=>document.getElementById('evp').textContent='---',2000)}}
+function shareScore(){let t=`I caught ${ghosts} ghosts on GHOSTBOX DEFENDER ULTRA! 👻 Rank: ${document.getElementById('rank').textContent} - Can you beat me? https://ghostbox-defender.onrender.com`;if(navigator.share){navigator.share({title:'Ghostbox Ultra',text:t})}else{navigator.clipboard.writeText(t);alert('Score copied! Paste to WhatsApp/TikTok 🔥')}}
+initMap();log('ULTRA System Online - Accra Ghost Network ready...');document.addEventListener('keydown',e=>{if(e.key.toLowerCase()=='s')scan()})
 </script>
 </body>
 </html>
     """
-
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run()
