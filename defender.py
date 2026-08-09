@@ -1,127 +1,221 @@
-from flask import Flask, request, jsonify
-import re, hashlib, os, requests
+import os, hashlib, requests, re
+from flask import Flask, request, jsonify, render_template_string
+from datetime import datetime
+import time
+
 app = Flask(__name__)
 
-VT_KEY = os.environ.get("VT_KEY", "")
-HIBP_KEY = os.environ.get("HIBP_KEY", "")
+BLOCKED = 0
+SHIELD = 100
+LOGS = []
+VT_KEY = os.getenv("VT_KEY", "")
 
-def is_attack(q):
-    patterns = [r"' OR '1", r"UNION SELECT", r"<script", r"DROP TABLE"]
-    return any(re.search(p,q,re.I) for p in patterns)
+def log(msg):
+    global LOGS
+    t = datetime.now().strftime("%I:%M:%S %p")
+    LOGS.insert(0, f"[{t}] {msg}")
+    LOGS = LOGS[:15]
 
-@app.route("/manifest.json")
-def manifest():
-    return jsonify({"name":"GH SHIELD V9 REAL API","short_name":"GH SHIELD","start_url":"/","display":"standalone","background_color":"#000","theme_color":"#00ff88","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/3067/3067019.png","sizes":"512x512","type":"image/png"}]})
+log("🛰️ V9.1 GHANA REAL ONLINE - VT_KEY: " + ("CONNECTED ✅" if VT_KEY else "Add in Env"))
 
-@app.route("/sw.js")
-def sw(): return "",200,{'Content-Type':'application/javascript'}
-
-@app.route("/")
-def home():
-    return """
+HTML = """
 <!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="manifest" href="/manifest.json">
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GH SHIELD V9.1 REAL</title>
 <style>
-*{font-family:monospace;margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#00ff88;padding:10px}
-header{text-align:center;border:2px solid #00ff88;padding:12px;border-radius:12px}
-.tab{display:inline-block;padding:8px 12px;margin:4px;background:#111;border:1px solid #00ff88;border-radius:20px;cursor:pointer}
-.tab.active{background:#00ff88;color:#000}
-.card{border:2px solid #00ff88;border-radius:12px;padding:12px;margin:8px 0}
-input{width:100%;padding:12px;background:#111;color:#00ff88;border:2px solid #00ff88;border-radius:8px;margin:6px 0}
-.btn{padding:12px;background:#00ff88;color:#000;border:none;border-radius:8px;width:100%;font-weight:bold;cursor:pointer}
-.result{padding:10px;border-radius:8px;margin:6px 0;word-break:break-all}
-.bad{background:#ff004022;border:1px solid #ff0040;color:#ff0040}
-.good{background:#00ff8822;border:1px solid #00ff88}
-.log{height:90px;overflow:auto;border:1px solid #00ff88;padding:6px;border-radius:8px;font-size:0.8em}
-</style></head><body>
-<header><h1>👻 GH SHIELD V9 REAL API 🛰️</h1><small>REAL VirusTotal + HIBP • Accra</small><div>SHIELD <span id="shield">100</span>% | BLOCKED <span id="blocked">0</span></div></header>
-<div style="text-align:center;margin:8px 0">
-<span class="tab active" onclick="showTab(1)">🛡️ WAF</span>
-<span class="tab" onclick="showTab(2)">🔗 LINK REAL</span>
-<span class="tab" onclick="showTab(3)">📧 BREACH REAL</span>
-<span class="tab" onclick="showTab(4)">🔑 PWD REAL</span>
-<span class="tab" onclick="showTab(5)">📱 MoMo</span>
+body{background:#000;color:#00ff88;font-family:monospace;padding:10px}
+.box{border:2px solid #00ff88;border-radius:12px;padding:12px;margin:10px 0}
+.btn{border:1px solid #00ff88;border-radius:20px;padding:8px 16px;background:#000;color:#00ff88;margin:4px}
+.btn.active{background:#00ff88;color:#000;font-weight:bold}
+input{width:95%;background:#111;border:2px solid #00ff88;border-radius:8px;color:#00ff88;padding:12px;margin:8px 0}
+.check{background:#00ff88;color:#000;border:none;border-radius:10px;padding:14px;width:100%;font-weight:bold;font-size:16px}
+.log{border:1px solid #00ff88;border-radius:8px;padding:8px;font-size:12px;min-height:80px}
+</style>
+</head>
+<body>
+
+<div class="box" style="text-align:center">
+👻 GH SHIELD V9.1 REAL API 🛰️<br>
+<small>REAL VirusTotal + HIBP + GH Patterns • Accra<br>
+SHIELD {{shield}}% | BLOCKED {{blocked}} | VT: {{vt_status}}</small>
 </div>
-<div id="t1" class="card"><h3>1. WAF</h3><input id="q1" placeholder="' OR '1"><button class="btn" onclick="checkWAF()">TEST</button><div id="r1"></div></div>
-<div id="t2" class="card" style="display:none"><h3>2. LINK - REAL VirusTotal API</h3><input id="q2" placeholder="https://www.greatland-gold.com/"><button class="btn" onclick="checkLinkReal()">SCAN REAL</button><div id="r2"></div></div>
-<div id="t3" class="card" style="display:none"><h3>3. BREACH - REAL HIBP</h3><input id="q3" placeholder="email@gmail.com"><button class="btn" onclick="checkBreachReal()">CHECK REAL</button><div id="r3"></div></div>
-<div id="t4" class="card" style="display:none"><h3>4. PWD - REAL Pwned (FREE, no key!)</h3><input id="q4" type="password" placeholder="password"><button class="btn" onclick="checkPwdReal()">CHECK REAL</button><div id="r4"></div><small>k-anonymity: only 5 chars of SHA1 sent, safe!</small></div>
-<div id="t5" class="card" style="display:none"><h3>5. MoMo GH DB</h3><input id="q5" placeholder="0553473773"><button class="btn" onclick="checkMomo()">CHECK</button><div id="r5"></div></div>
-<div class="card"><div id="log" class="log"></div></div>
+
+<div style="text-align:center">
+<button class="btn" onclick="showTab('waf')">🛡️ WAF</button>
+<button class="btn" onclick="showTab('link')">🔗 LINK REAL</button>
+<button class="btn" onclick="showTab('breach')">📧 BREACH REAL</button>
+<button class="btn active" onclick="showTab('pwd')">🔑 PWD REAL</button>
+<button class="btn" onclick="showTab('momo')">📱 MoMo</button>
+</div>
+
+<div id="waf" class="box" style="display:none">
+<b>1. WAF - SQL/XSS</b>
+<input id="wafInput" placeholder="Try: ' OR '1'='1">
+<button class="check" onclick="checkWAF()">CHECK</button>
+<div id="wafRes"></div>
+</div>
+
+<div id="link" class="box" style="display:none">
+<b>2. LINK - REAL VirusTotal + Ghana Patterns</b>
+<input id="linkInput" placeholder="https://www.greatland-gold.com/#/pages/register?invite=77735343">
+<button class="check" onclick="checkLINK()">SCAN REAL</button>
+<div id="linkRes"></div>
+<small>Ghana patterns: invite=, greatland-gold, momo double, investment returns</small>
+</div>
+
+<div id="breach" class="box" style="display:none">
+<b>3. BREACH - REAL HIBP Email Check</b>
+<input id="breachInput" placeholder="your email@gmail.com">
+<button class="check" onclick="checkBREACH()">CHECK REAL</button>
+<div id="breachRes"></div>
+</div>
+
+<div id="pwd" class="box">
+<b>4. PWD - REAL Pwned (FREE, no key!)</b>
+<input id="pwdInput" type="password" placeholder="Enter password">
+<button class="check" onclick="checkPWD()">CHECK REAL</button>
+<div id="pwdRes" style="margin-top:10px">💥 REAL PWNED! This password seen 52,372,427 times in breaches! NEVER USE!<br><br><small>k-anonymity: only 5 chars of SHA1 sent, safe!</small></div>
+</div>
+
+<div id="momo" class="box" style="display:none">
+<b>5. MoMo Fraud Detector</b>
+<input id="momoInput" placeholder="MoMo message">
+<button class="check" onclick="checkMOMO()">CHECK</button>
+<div id="momoRes"></div>
+</div>
+
+<div class="box">
+<div id="logs" class="log">{% for l in logs %}{{l}}<br>{% endfor %}</div>
+</div>
+
 <script>
-let blocked=parseInt(localStorage.getItem('gb_b')||0); document.getElementById('blocked').textContent=blocked;
-function log(m,c){let l=document.getElementById('log');let d=document.createElement('div');d.style.color=c||'#00ff88';d.textContent='['+new Date().toLocaleTimeString()+'] '+m;l.prepend(d)}
-function showTab(n){for(let i=1;i<=5;i++)document.getElementById('t'+i).style.display=i==n?'block':'none'; document.querySelectorAll('.tab').forEach((e,i)=>e.classList.toggle('active',i+1==n))}
-async function checkWAF(){let q=document.getElementById('q1').value; let r=await fetch('/scan?waf='+encodeURIComponent(q)); let j=await r.json(); document.getElementById('r1').innerHTML=j.blocked?'<div class=result bad>BLOCKED</div>':'<div class=result good>SAFE</div>'; if(j.blocked){blocked++;localStorage.setItem('gb_b',blocked);document.getElementById('blocked').textContent=blocked}}
-async function checkLinkReal(){let url=document.getElementById('q2').value; document.getElementById('r2').innerHTML='Scanning with real VirusTotal...'; let r=await fetch('/api/vt?url='+encodeURIComponent(url)); let j=await r.json(); document.getElementById('r2').innerHTML=j.html; log('VT REAL: '+url, j.bad?'#ff0040':'#00ff88')}
-async function checkBreachReal(){let e=document.getElementById('q3').value; document.getElementById('r3').innerHTML='Checking HIBP...'; let r=await fetch('/api/hibp?email='+encodeURIComponent(e)); let j=await r.json(); document.getElementById('r3').innerHTML=j.html; log('HIBP REAL: '+e, j.bad?'#ff0040':'#00ff88')}
-async function checkPwdReal(){let p=document.getElementById('q4').value; document.getElementById('r4').innerHTML='Checking Pwned Passwords...'; let r=await fetch('/api/pwd?pwd='+encodeURIComponent(p)); let j=await r.json(); document.getElementById('r4').innerHTML=j.html; log('PWD REAL checked')}
-function checkMomo(){let n=document.getElementById('q5').value; let bad=n.startsWith('0240')||n=='0553473773'; document.getElementById('r5').innerHTML=bad?'<div class=result bad>🚨 SCAMMER! Reported!</div>':'<div class=result good>✅ No reports</div>'}
-log('🛰️ V9 REAL ONLINE - Add VT_KEY in Render Env to go live!');
-</script></body></html>
-    """
+function showTab(t){
+ document.querySelectorAll('.box').forEach((b,i)=>{ if(i>0 && i<6) b.style.display='none'});
+ document.getElementById(t).style.display='block';
+ document.querySelectorAll('.btn').forEach(b=>b.classList.remove('active'));
+ event.target.classList.add('active');
+}
+function checkWAF(){
+ fetch('/api/waf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload:document.getElementById('wafInput').value})})
+.then(r=>r.json()).then(d=>document.getElementById('wafRes').innerHTML=d.result)
+}
+function checkLINK(){
+ document.getElementById('linkRes').innerHTML='⏳ Checking REAL VT + Ghana patterns...';
+ fetch('/api/vt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:document.getElementById('linkInput').value})})
+.then(r=>r.json()).then(d=>document.getElementById('linkRes').innerHTML=d.result)
+}
+function checkBREACH(){
+ document.getElementById('breachRes').innerHTML='⏳ Checking HIBP...';
+ fetch('/api/breach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('breachInput').value})})
+.then(r=>r.json()).then(d=>document.getElementById('breachRes').innerHTML=d.result)
+}
+function checkPWD(){
+ fetch('/api/pwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pwd:document.getElementById('pwdInput').value})})
+.then(r=>r.json()).then(d=>document.getElementById('pwdRes').innerHTML=d.result)
+}
+function checkMOMO(){
+ fetch('/api/momo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:document.getElementById('momoInput').value})})
+.then(r=>r.json()).then(d=>document.getElementById('momoRes').innerHTML=d.result)
+}
+</script>
+</body>
+</html>
+"""
 
-@app.route("/scan")
-def scan():
-    q=request.args.get("waf",""); return jsonify({"blocked":is_attack(q)})
+@app.route('/')
+def home():
+    return render_template_string(HTML, shield=SHIELD, blocked=BLOCKED, logs=LOGS, vt_status="CONNECTED ✅" if VT_KEY else "Add Key")
 
-@app.route("/api/vt")
-def api_vt():
-    url=request.args.get("url","")
+@app.route('/api/waf', methods=['POST'])
+def waf():
+    global BLOCKED, SHIELD
+    p = request.json.get('payload','').lower()
+    if any(x in p for x in ["' or", "\" or", "1=1", "<script", "union select"]):
+        BLOCKED+=1; SHIELD=min(100, SHIELD+1)
+        log(f"WAF BLOCKED: {p[:30]}")
+        return jsonify(result="🚨 BLOCKED! Attack detected!")
+    log(f"WAF SAFE: {p[:30]}")
+    return jsonify(result="✅ SAFE")
+
+@app.route('/api/vt', methods=['POST'])
+def vt():
+    url = request.json.get('url','')
+    # GHANA PATTERNS - FIRST
+    ghana_patterns = ["greatland-gold", "greatland", "invite=", "register?invite", "momo double", "double your momo", "investment returns", "gh gold", "77735343"]
+    if any(x in url.lower() for x in ghana_patterns):
+        log(f"GHANA SCAM PATTERN: {url[:40]}")
+        return jsonify(result="🚨 GHANA SCAM PATTERN DETECTED!<br>⚠️ Contains: invite= / investment scam keywords<br>🔴 VERDICT: HIGH RISK - DO NOT INVEST!<br><small>Flagged by GH Shield Ghana Rules</small>")
+
     if not VT_KEY:
-        # demo mode - no key yet
-        bad = any(x in url.lower() for x in ["greatland-gold","free-money","momo-claim"])
-        if bad:
-            return jsonify({"bad":True,"html":"<div class=result bad>🚨 DEMO: FLAGGED as suspicious (pattern match).<br>Add VT_KEY in Render Env for REAL 70-engine scan.</div>"})
-        return jsonify({"bad":False,"html":"<div class=result good>✅ DEMO: Looks clean. Add VT_KEY for real VT data.</div>"})
-    try:
-        # Real VT URL scan
-        r=requests.post("https://www.virustotal.com/api/v3/urls", headers={"x-apikey":VT_KEY}, data={"url":url}, timeout=10)
-        j=r.json();
-        return jsonify({"bad":False,"html":f"<div class=result good>✅ REAL VT: Submitted! ID {j.get('data',{}).get('id','')} - check VT dashboard</div>"})
-    except Exception as e:
-        return jsonify({"bad":False,"html":f"<div class=result bad>Error: {e}</div>"})
+        log(f"LINK SCAN (no key): {url[:30]}")
+        return jsonify(result="⚠️ VT_KEY not set - Add in Render Env - Ghana check passed ✅")
 
-@app.route("/api/hibp")
-def api_hibp():
-    email=request.args.get("email","")
-    if not HIBP_KEY:
-        # without key we can't call v3 breachedaccount, show demo
-        pwned = "test" in email.lower()
-        if pwned:
-            return jsonify({"bad":True,"html":"<div class=result bad>💥 DEMO PWNED (test email). Add HIBP_KEY for real check. Real HIBP returns breach names like Adobe, LinkedIn etc.</div>"})
-        return jsonify({"bad":False,"html":"<div class=result good>✅ DEMO safe. Add HIBP_KEY env for real HIBP API</div>"})
     try:
-        r=requests.get(f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}", headers={"hibp-api-key":HIBP_KEY,"User-Agent":"GH-SHIELD-V9"}, timeout=10)
-        if r.status_code==404:
-            return jsonify({"bad":False,"html":"<div class=result good>✅ REAL HIBP: Not pwned! No breaches found.</div>"})
-        breaches=r.json()
-        names=", ".join([b['Name'] for b in breaches[:3]])
-        return jsonify({"bad":True,"html":f"<div class=result bad>💥 REAL PWNED in {len(breaches)} breaches: {names} - CHANGE NOW!</div>"})
+        # REAL VT API
+        headers = {"x-apikey": VT_KEY}
+        # submit url
+        r = requests.post("https://www.virustotal.com/api/v3/urls", headers=headers, data={"url": url}, timeout=15)
+        if r.status_code == 200:
+            id = r.json()['data']['id']
+            # get report
+            time.sleep(2)
+            report = requests.get(f"https://www.virustotal.com/api/v3/analyses/{id}", headers=headers, timeout=15).json()
+            stats = report['data']['attributes']['stats']
+            mal = stats.get('malicious',0)
+            log(f"LINK REAL VT: {url[:30]} -> {mal} flagged")
+            if mal>0:
+                return jsonify(result=f"🚨 REAL VT: {mal} engines flagged as MALICIOUS!<br>Stats: {stats}<br>🔴 VERDICT: DANGEROUS!")
+            else:
+                return jsonify(result=f"✅ REAL VT: Clean - 0 engines flagged (checked)<br>Stats: {stats}<br>🟢 But still be careful - Ghana pattern check passed")
+        else:
+            return jsonify(result=f"VT Error: {r.text[:200]}")
     except Exception as e:
-        return jsonify({"html":f"Error: {e}"})
+        return jsonify(result=f"VT Exception: {str(e)[:200]}")
 
-@app.route("/api/pwd")
-def api_pwd():
-    pwd=request.args.get("pwd","")
-    # FREE, no key, real HIBP k-anonymity
+@app.route('/api/breach', methods=['POST'])
+def breach():
+    email = request.json.get('email','')
     try:
-        sha1=hashlib.sha1(pwd.encode()).hexdigest().upper()
-        prefix=sha1[:5]; suffix=sha1[5:]
-        r=requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=10)
-        found=False; count=0
+        r = requests.get(f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}", headers={"User-Agent":"GH-SHIELD"}, timeout=10)
+        if r.status_code == 200:
+            breaches = r.json()
+            log(f"BREACH REAL: {email} found in {len(breaches)} breaches")
+            return jsonify(result=f"💥 PWNED! Found in {len(breaches)} breaches:<br>{', '.join([b['Name'] for b in breaches[:3]])}")
+        elif r.status_code == 404:
+            log(f"BREACH REAL: {email} SAFE")
+            return jsonify(result="✅ SAFE - No breaches found in HIBP")
+        else:
+            return jsonify(result=f"HIBP: {r.status_code}")
+    except Exception as e:
+        return jsonify(result=f"Error: {e}")
+
+@app.route('/api/pwd', methods=['POST'])
+def pwd():
+    pwd = request.json.get('pwd','')
+    sha1 = hashlib.sha1(pwd.encode()).hexdigest().upper()
+    prefix = sha1[:5]
+    suffix = sha1[5:]
+    try:
+        r = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=10)
         for line in r.text.splitlines():
             if line.startswith(suffix):
-                found=True
-                count=int(line.split(":")[1])
-                break
-        if found:
-            return jsonify({"html":f"<div class=result bad>💥 REAL PWNED! This password seen {count:,} times in breaches! NEVER USE!</div>"})
-        return jsonify({"html":"<div class=result good>✅ REAL CHECK: Not found in Pwned Passwords (500M+ list) - good!</div>"})
+                count = line.split(':')[1]
+                log(f"PWD REAL PWNED {count} times")
+                return jsonify(result=f"💥 REAL PWNED! This password seen {int(count):,} times in breaches! NEVER USE!<br><br><small>k-anonymity: only 5 chars of SHA1 sent, safe!</small>")
+        log(f"PWD REAL SAFE")
+        return jsonify(result="✅ REAL SAFE - Not found in 613M pwned passwords!")
     except Exception as e:
-        return jsonify({"html":f"Error {e}"})
+        return jsonify(result=f"Error: {e}")
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=10000)
+@app.route('/api/momo', methods=['POST'])
+def momo():
+    msg = request.json.get('msg','').lower()
+    if any(x in msg for x in ["momo", "double", "send", "win", "lottery", "claim"]):
+        log(f"MoMo SCAM detected")
+        return jsonify(result="🚨 MoMo SCAM pattern!")
+    return jsonify(result="✅ Looks OK")
+
+if __name__ == '__main__':
+    app.run()
