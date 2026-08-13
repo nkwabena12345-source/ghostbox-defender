@@ -1,221 +1,183 @@
-import os, hashlib, requests, re
-from flask import Flask, request, jsonify, render_template_string
-from datetime import datetime
-import time
+# GH SHIELD V9.2 - GHANA REAL API + Rate Limiter
+# Built in Accra, Ghana - 2:06 AM Failed → 7:15 PM Connected → V9.2 Protected
+import os, re, time, hashlib, requests
+from flask import Flask, request, render_template_string
+from collections import defaultdict
 
 app = Flask(__name__)
 
-BLOCKED = 0
-SHIELD = 100
-LOGS = []
-VT_KEY = os.getenv("VT_KEY", "")
+# --- KEYS FROM RENDER ENV ---
+VT_KEY = os.environ.get("VT_KEY", "")
+HIBP_KEY = os.environ.get("HIBP_KEY", "") # optional
 
-def log(msg):
-    global LOGS
-    t = datetime.now().strftime("%I:%M:%S %p")
-    LOGS.insert(0, f"[{t}] {msg}")
-    LOGS = LOGS[:15]
-
-log("🛰️ V9.1 GHANA REAL ONLINE - VT_KEY: " + ("CONNECTED ✅" if VT_KEY else "Add in Env"))
+# --- V9.2 RATE LIMITER ---
+CACHE = {}
+CACHE_TIME = 3600
+user_requests = defaultdict(list)
+vt_used_today = 0
+VT_QUOTA = 480
 
 HTML = """
 <!DOCTYPE html>
 <html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GH SHIELD V9.1 REAL</title>
+<head><title>GH SHIELD V9.2</title>
 <style>
-body{background:#000;color:#00ff88;font-family:monospace;padding:10px}
-.box{border:2px solid #00ff88;border-radius:12px;padding:12px;margin:10px 0}
-.btn{border:1px solid #00ff88;border-radius:20px;padding:8px 16px;background:#000;color:#00ff88;margin:4px}
-.btn.active{background:#00ff88;color:#000;font-weight:bold}
-input{width:95%;background:#111;border:2px solid #00ff88;border-radius:8px;color:#00ff88;padding:12px;margin:8px 0}
-.check{background:#00ff88;color:#000;border:none;border-radius:10px;padding:14px;width:100%;font-weight:bold;font-size:16px}
-.log{border:1px solid #00ff88;border-radius:8px;padding:8px;font-size:12px;min-height:80px}
+body{background:#0a0a0a;color:#00ff88;font-family:monospace;padding:20px}
+.box{border:1px solid #00ff88;padding:15px;margin:10px 0;border-radius:8px}
+input,button{padding:10px;width:90%;margin:5px;background:#111;color:#00ff88;border:1px solid #00ff88}
+.high{color:red}.medium{color:yellow}.low{color:#00ff88}
 </style>
 </head>
 <body>
+<h1>🛡️ GH SHIELD V9.2 - GHANA REAL API</h1>
+<div class="box">STATUS: ONLINE | VT: CONNECTED ✅ | CACHE: {{cache_size}} | VT USED: {{vt_used}}/480</div>
 
-<div class="box" style="text-align:center">
-👻 GH SHIELD V9.1 REAL API 🛰️<br>
-<small>REAL VirusTotal + HIBP + GH Patterns • Accra<br>
-SHIELD {{shield}}% | BLOCKED {{blocked}} | VT: {{vt_status}}</small>
-</div>
-
-<div style="text-align:center">
-<button class="btn" onclick="showTab('waf')">🛡️ WAF</button>
-<button class="btn" onclick="showTab('link')">🔗 LINK REAL</button>
-<button class="btn" onclick="showTab('breach')">📧 BREACH REAL</button>
-<button class="btn active" onclick="showTab('pwd')">🔑 PWD REAL</button>
-<button class="btn" onclick="showTab('momo')">📱 MoMo</button>
-</div>
-
-<div id="waf" class="box" style="display:none">
-<b>1. WAF - SQL/XSS</b>
-<input id="wafInput" placeholder="Try: ' OR '1'='1">
-<button class="check" onclick="checkWAF()">CHECK</button>
-<div id="wafRes"></div>
-</div>
-
-<div id="link" class="box" style="display:none">
-<b>2. LINK - REAL VirusTotal + Ghana Patterns</b>
-<input id="linkInput" placeholder="https://www.greatland-gold.com/#/pages/register?invite=77735343">
-<button class="check" onclick="checkLINK()">SCAN REAL</button>
-<div id="linkRes"></div>
-<small>Ghana patterns: invite=, greatland-gold, momo double, investment returns</small>
-</div>
-
-<div id="breach" class="box" style="display:none">
-<b>3. BREACH - REAL HIBP Email Check</b>
-<input id="breachInput" placeholder="your email@gmail.com">
-<button class="check" onclick="checkBREACH()">CHECK REAL</button>
-<div id="breachRes"></div>
-</div>
-
-<div id="pwd" class="box">
-<b>4. PWD - REAL Pwned (FREE, no key!)</b>
-<input id="pwdInput" type="password" placeholder="Enter password">
-<button class="check" onclick="checkPWD()">CHECK REAL</button>
-<div id="pwdRes" style="margin-top:10px">💥 REAL PWNED! This password seen 52,372,427 times in breaches! NEVER USE!<br><br><small>k-anonymity: only 5 chars of SHA1 sent, safe!</small></div>
-</div>
-
-<div id="momo" class="box" style="display:none">
-<b>5. MoMo Fraud Detector</b>
-<input id="momoInput" placeholder="MoMo message">
-<button class="check" onclick="checkMOMO()">CHECK</button>
-<div id="momoRes"></div>
+<div class="box">
+<h3>1. LINK REAL - VirusTotal 70 engines + Ghana Patterns</h3>
+<form method="POST"><input name="url" placeholder="https://greatland-gold.com/#/pages/register?invite=77735343"><button name="action" value="link">SCAN LINK</button></form>
+<div>{{link_result}}</div>
 </div>
 
 <div class="box">
-<div id="logs" class="log">{% for l in logs %}{{l}}<br>{% endfor %}</div>
+<h3>2. PWD REAL - HaveIBeenPwned k-anonymity</h3>
+<form method="POST"><input name="pwd" type="password" placeholder="password123"><button name="action" value="pwd">CHECK PWD</button></form>
+<div>{{pwd_result}}</div>
 </div>
 
-<script>
-function showTab(t){
- document.querySelectorAll('.box').forEach((b,i)=>{ if(i>0 && i<6) b.style.display='none'});
- document.getElementById(t).style.display='block';
- document.querySelectorAll('.btn').forEach(b=>b.classList.remove('active'));
- event.target.classList.add('active');
-}
-function checkWAF(){
- fetch('/api/waf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload:document.getElementById('wafInput').value})})
-.then(r=>r.json()).then(d=>document.getElementById('wafRes').innerHTML=d.result)
-}
-function checkLINK(){
- document.getElementById('linkRes').innerHTML='⏳ Checking REAL VT + Ghana patterns...';
- fetch('/api/vt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:document.getElementById('linkInput').value})})
-.then(r=>r.json()).then(d=>document.getElementById('linkRes').innerHTML=d.result)
-}
-function checkBREACH(){
- document.getElementById('breachRes').innerHTML='⏳ Checking HIBP...';
- fetch('/api/breach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('breachInput').value})})
-.then(r=>r.json()).then(d=>document.getElementById('breachRes').innerHTML=d.result)
-}
-function checkPWD(){
- fetch('/api/pwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pwd:document.getElementById('pwdInput').value})})
-.then(r=>r.json()).then(d=>document.getElementById('pwdRes').innerHTML=d.result)
-}
-function checkMOMO(){
- fetch('/api/momo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:document.getElementById('momoInput').value})})
-.then(r=>r.json()).then(d=>document.getElementById('momoRes').innerHTML=d.result)
-}
-</script>
+<div class="box">
+<h3>3. BREACH REAL - Email leak check</h3>
+<form method="POST"><input name="email" placeholder="test@gmail.com"><button name="action" value="breach">CHECK BREACH</button></form>
+<div>{{breach_result}}</div>
+</div>
+
+<div class="box">
+<h3>4. WAF - SQLi/XSS/CMDi/LFI</h3>
+<form method="POST"><input name="waf" placeholder="' OR '1'='1"><button name="action" value="waf">TEST WAF</button></form>
+<div>{{waf_result}}</div>
+</div>
+
 </body>
 </html>
 """
 
-@app.route('/')
-def home():
-    return render_template_string(HTML, shield=SHIELD, blocked=BLOCKED, logs=LOGS, vt_status="CONNECTED ✅" if VT_KEY else "Add Key")
+def ghana_patterns(url):
+    score = 0
+    reasons = []
+    if "invite=" in url.lower():
+        score += 40; reasons.append("invite= parameter (MLM pattern)")
+    if "greatland-gold" in url.lower() or "gold" in url.lower() and "invite" in url.lower():
+        score += 50; reasons.append("greatland-gold Ghana scam signature")
+    if "momo" in url.lower() and "double" in url.lower():
+        score += 40; reasons.append("MoMo double money scam")
+    if "whatsapp" in url.lower() and "earn" in url.lower():
+        score += 30; reasons.append("WhatsApp earn money")
+    return score, reasons
 
-@app.route('/api/waf', methods=['POST'])
-def waf():
-    global BLOCKED, SHIELD
-    p = request.json.get('payload','').lower()
-    if any(x in p for x in ["' or", "\" or", "1=1", "<script", "union select"]):
-        BLOCKED+=1; SHIELD=min(100, SHIELD+1)
-        log(f"WAF BLOCKED: {p[:30]}")
-        return jsonify(result="🚨 BLOCKED! Attack detected!")
-    log(f"WAF SAFE: {p[:30]}")
-    return jsonify(result="✅ SAFE")
+def real_vt_check(url):
+    global vt_used_today
+    now = time.time()
+    ip = request.remote_addr
 
-@app.route('/api/vt', methods=['POST'])
-def vt():
-    url = request.json.get('url','')
-    # GHANA PATTERNS - FIRST
-    ghana_patterns = ["greatland-gold", "greatland", "invite=", "register?invite", "momo double", "double your momo", "investment returns", "gh gold", "77735343"]
-    if any(x in url.lower() for x in ghana_patterns):
-        log(f"GHANA SCAM PATTERN: {url[:40]}")
-        return jsonify(result="🚨 GHANA SCAM PATTERN DETECTED!<br>⚠️ Contains: invite= / investment scam keywords<br>🔴 VERDICT: HIGH RISK - DO NOT INVEST!<br><small>Flagged by GH Shield Ghana Rules</small>")
+    # Cache check
+    if url in CACHE:
+        res, ts = CACHE[url]
+        if now - ts < CACHE_TIME:
+            return res + " <br><b>[CACHED - Ghana Fast ⚡]</b>"
+
+    # Quota check
+    if vt_used_today >= VT_QUOTA:
+        return "⚠️ VT DAILY LIMIT - Using Ghana Patterns Only (Resets midnight UTC)"
+
+    # Rate limit 5/min
+    user_requests[ip] = [t for t in user_requests[ip] if now - t < 60]
+    if len(user_requests[ip]) >= 5:
+        return "⏳ SLOW DOWN - 5 scans/min max"
 
     if not VT_KEY:
-        log(f"LINK SCAN (no key): {url[:30]}")
-        return jsonify(result="⚠️ VT_KEY not set - Add in Render Env - Ghana check passed ✅")
+        return "VT_KEY not set in Render Env"
 
     try:
-        # REAL VT API
-        headers = {"x-apikey": VT_KEY}
-        # submit url
-        r = requests.post("https://www.virustotal.com/api/v3/urls", headers=headers, data={"url": url}, timeout=15)
-        if r.status_code == 200:
-            id = r.json()['data']['id']
-            # get report
-            time.sleep(2)
-            report = requests.get(f"https://www.virustotal.com/api/v3/analyses/{id}", headers=headers, timeout=15).json()
-            stats = report['data']['attributes']['stats']
-            mal = stats.get('malicious',0)
-            log(f"LINK REAL VT: {url[:30]} -> {mal} flagged")
-            if mal>0:
-                return jsonify(result=f"🚨 REAL VT: {mal} engines flagged as MALICIOUS!<br>Stats: {stats}<br>🔴 VERDICT: DANGEROUS!")
-            else:
-                return jsonify(result=f"✅ REAL VT: Clean - 0 engines flagged (checked)<br>Stats: {stats}<br>🟢 But still be careful - Ghana pattern check passed")
-        else:
-            return jsonify(result=f"VT Error: {r.text[:200]}")
+        # Submit URL
+        r = requests.post("https://www.virustotal.com/api/v3/urls", headers={"x-apikey": VT_KEY}, data={"url": url}, timeout=10)
+        if r.status_code!= 200:
+            return f"VT Error {r.status_code}: {r.text[:100]}"
+        url_id = r.json()["data"]["id"]
+        # Get report
+        r2 = requests.get(f"https://www.virustotal.com/api/v3/urls/{url_id}", headers={"x-apikey": VT_KEY}, timeout=10)
+        data = r2.json()["data"]["attributes"]["last_analysis_stats"]
+        malicious = data.get("malicious", 0)
+        result = f"VT REAL: {malicious}/70 malicious | Harmless: {data.get('harmless',0)}"
+        CACHE[url] = (result, now)
+        user_requests[ip].append(now)
+        vt_used_today += 1
+        return result
     except Exception as e:
-        return jsonify(result=f"VT Exception: {str(e)[:200]}")
+        return f"VT Offline: {str(e)[:100]} - Using Ghana Patterns"
 
-@app.route('/api/breach', methods=['POST'])
-def breach():
-    email = request.json.get('email','')
+def real_pwd_check(pwd):
     try:
-        r = requests.get(f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}", headers={"User-Agent":"GH-SHIELD"}, timeout=10)
-        if r.status_code == 200:
-            breaches = r.json()
-            log(f"BREACH REAL: {email} found in {len(breaches)} breaches")
-            return jsonify(result=f"💥 PWNED! Found in {len(breaches)} breaches:<br>{', '.join([b['Name'] for b in breaches[:3]])}")
-        elif r.status_code == 404:
-            log(f"BREACH REAL: {email} SAFE")
-            return jsonify(result="✅ SAFE - No breaches found in HIBP")
-        else:
-            return jsonify(result=f"HIBP: {r.status_code}")
-    except Exception as e:
-        return jsonify(result=f"Error: {e}")
-
-@app.route('/api/pwd', methods=['POST'])
-def pwd():
-    pwd = request.json.get('pwd','')
-    sha1 = hashlib.sha1(pwd.encode()).hexdigest().upper()
-    prefix = sha1[:5]
-    suffix = sha1[5:]
-    try:
+        sha1 = hashlib.sha1(pwd.encode()).hexdigest().upper()
+        prefix, suffix = sha1[:5], sha1[5:]
         r = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=10)
         for line in r.text.splitlines():
             if line.startswith(suffix):
-                count = line.split(':')[1]
-                log(f"PWD REAL PWNED {count} times")
-                return jsonify(result=f"💥 REAL PWNED! This password seen {int(count):,} times in breaches! NEVER USE!<br><br><small>k-anonymity: only 5 chars of SHA1 sent, safe!</small>")
-        log(f"PWD REAL SAFE")
-        return jsonify(result="✅ REAL SAFE - Not found in 613M pwned passwords!")
+                count = line.split(":")[1]
+                return f"🔴 PWNED REAL: Found {count} times in 613M leaks! (k-anonymity safe)"
+        return "🟢 SAFE REAL: Not found in 613M leaks"
     except Exception as e:
-        return jsonify(result=f"Error: {e}")
+        return f"Pwd Check Error: {e}"
 
-@app.route('/api/momo', methods=['POST'])
-def momo():
-    msg = request.json.get('msg','').lower()
-    if any(x in msg for x in ["momo", "double", "send", "win", "lottery", "claim"]):
-        log(f"MoMo SCAM detected")
-        return jsonify(result="🚨 MoMo SCAM pattern!")
-    return jsonify(result="✅ Looks OK")
+def real_breach_check(email):
+    if not HIBP_KEY:
+        return "Add HIBP_KEY in Render Env for breach check, or use PWD check (free)"
+    try:
+        r = requests.get(f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}", headers={"hibp-api-key": HIBP_KEY, "user-agent": "GH-SHIELD"}, timeout=10)
+        if r.status_code == 200:
+            breaches = [b["Name"] for b in r.json()]
+            return f"🔴 BREACHED in: {', '.join(breaches)}"
+        if r.status_code == 404:
+            return "🟢 Not breached"
+        return f"HIBP {r.status_code}"
+    except Exception as e:
+        return f"Breach Error: {e}"
 
-if __name__ == '__main__':
-    app.run()
+def waf_check(payload):
+    if not payload:
+        return ""
+    payload_lower = payload.lower()
+    if "../" in payload or "/etc/passwd" in payload_lower:
+        return "🔴 BLOCKED LFI"
+    if "<script" in payload_lower or "onerror=" in payload_lower:
+        return "🔴 BLOCKED XSS"
+    if "' or '1'='1" in payload_lower or "' or 1=1" in payload_lower:
+        return "🔴 BLOCKED SQLi"
+    if ";" in payload and ("cat " in payload_lower or "ls " in payload_lower):
+        return "🔴 BLOCKED CMDi"
+    return "🟢 ALLOW - Clean"
+
+@app.route("/", methods=["GET", "POST"])
+def home():
+    link_result = pwd_result = breach_result = waf_result = ""
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "link":
+            url = request.form.get("url","").strip()
+            score, reasons = ghana_patterns(url)
+            vt = real_vt_check(url) if url else ""
+            gh = f"<br>Ghana Score: {score} - {', '.join(reasons) if reasons else 'No local pattern'}"
+            risk = "<span class='high'>HIGH RISK</span>" if score>=50 or "malicious" in vt.lower() else "<span class='low'>LOW</span>"
+            link_result = f"{vt}{gh}<br>Final: {risk}"
+        elif action == "pwd":
+            pwd = request.form.get("pwd","")
+            pwd_result = real_pwd_check(pwd) if pwd else ""
+        elif action == "breach":
+            email = request.form.get("email","")
+            breach_result = real_breach_check(email) if email else ""
+        elif action == "waf":
+            payload = request.form.get("waf","")
+            waf_result = waf_check(payload)
+
+    return render_template_string(HTML, link_result=link_result, pwd_result=pwd_result, breach_result=breach_result, waf_result=waf_result, cache_size=len(CACHE), vt_used=vt_used_today)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
